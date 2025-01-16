@@ -2,98 +2,159 @@ package sg.kata.service;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import sg.kata.exception.InsufficientBalanceException;
+import sg.kata.exception.InvalidAmountException;
+import sg.kata.model.BankAccount;
+import sg.kata.model.Statement;
+import sg.kata.repository.BankAccountRepository;
 
 import java.math.BigDecimal;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
+import static java.time.LocalDateTime.now;
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
+import static sg.kata.model.OperationType.DEPOSIT;
+import static sg.kata.model.OperationType.WITHDRAW;
+import static sg.kata.service.BankAccountService.*;
 
 @ExtendWith(MockitoExtension.class)
 public class BankAccountServiceTest {
 
+    @InjectMocks
+    private BankAccountService service;
+
+    @Mock
+    private BankAccountRepository repository;
+
     @Test
     void shouldMakeADepositWithSuccess() {
         // GIVEN
-        String accountId = "123";
-        BigDecimal initialBalance = BigDecimal.valueOf(100);
         BigDecimal depositAmount = BigDecimal.valueOf(50);
 
-        BankAccount account = new BankAccount(accountId, initialBalance);
-
-        when(repository.findById(accountId)).thenReturn(account);
-
         // WHEN
-        service.deposit(accountId, depositAmount);
+        service.deposit("123", depositAmount);
 
         // THEN
-        assertThat(account.getBalance()).isEqualTo(BigDecimal.valueOf(150));
-        verify(repository).save(account);
+        verify(repository).update("123", depositAmount, DEPOSIT);
+    }
+
+    @Test
+    void shouldNotMakeADepositIfAmountLessThanZero() {
+        // WHEN -THEN
+        Exception exception = assertThrows(InvalidAmountException.class,
+            () -> service.deposit("123", BigDecimal.valueOf(-50)));
+        assertThat(exception.getMessage()).isEqualTo(DEPOSIT.getDescription() + POSITIVE_AMOUNT_MESSAGE);
+        verifyNoInteractions(repository);
+    }
+
+    @Test
+    void shouldNotMakeADepositWithInvalidPrecision() {
+        // WHEN - THEN
+        Exception exception = assertThrows(InvalidAmountException.class, () ->
+            service.deposit("123", new BigDecimal("50.123")));
+
+        assertThat(exception.getMessage()).isEqualTo(PRECISION_EXCEEDED_MESSAGE);
+        verifyNoInteractions(repository);
     }
 
     @Test
     void shouldMakeAWithdrawWithSuccess() {
         // GIVEN
-        String accountId = "123";
+        BigDecimal withdrawAmount = BigDecimal.valueOf(50);
         BigDecimal initialBalance = BigDecimal.valueOf(100);
-        BigDecimal withdrawalAmount = BigDecimal.valueOf(50);
 
-        BankAccount account = new BankAccount(accountId, initialBalance);
-
-        when(repository.findById(accountId)).thenReturn(account);
+        BankAccount account = BankAccount.builder()
+            .accountId("123")
+            .balance(initialBalance)
+            .statements(emptyList())
+            .build();
+        when(repository.findById("123")).thenReturn(account);
 
         // WHEN
-        service.withdraw(accountId, withdrawalAmount);
+        service.withdraw("123", withdrawAmount);
 
         // THEN
-        assertThat(account.getBalance()).isEqualTo(BigDecimal.valueOf(50));
-        verify(repository).save(account);
+        verify(repository).update("123", withdrawAmount, WITHDRAW);
+    }
+
+    @Test
+    void shouldNotMakeAWithdrawIfAmountLessThanZero() {
+        // WHEN -THEN
+        Exception exception = assertThrows(InvalidAmountException.class,
+            () -> service.withdraw("123", BigDecimal.valueOf(-50)));
+        assertThat(exception.getMessage()).isEqualTo(WITHDRAW.getDescription() + POSITIVE_AMOUNT_MESSAGE);
+        verify(repository).findById("123");
+        verifyNoMoreInteractions(repository);
+    }
+
+    @Test
+    void shouldNotMakeAWithdrawWithInvalidPrecision() {
+        // WHEN - THEN
+        Exception exception = assertThrows(InvalidAmountException.class, () ->
+            service.withdraw("123", new BigDecimal("50.123")));
+
+        assertThat(exception.getMessage()).isEqualTo(PRECISION_EXCEEDED_MESSAGE);
+        verify(repository).findById("123");
+        verifyNoMoreInteractions(repository);
     }
 
     @Test
     void shouldNotMakeAWithdrawIfInsufficientBalance() {
         // GIVEN
-        String accountId = "123";
+        BigDecimal withdrawAmount = BigDecimal.valueOf(50);
         BigDecimal initialBalance = BigDecimal.valueOf(30);
-        BigDecimal withdrawalAmount = BigDecimal.valueOf(50);
 
-        BankAccount account = new BankAccount(accountId, initialBalance);
+        BankAccount account = BankAccount.builder()
+            .accountId("123")
+            .balance(initialBalance)
+            .statements(emptyList())
+            .build();
 
-        when(repository.findById(accountId)).thenReturn(account);
+        when(repository.findById("123")).thenReturn(account);
 
         // WHEN -THEN
-        Exception exception = assertThrows(IllegalArgumentException.class,
-            () -> service.withdraw(accountId, withdrawalAmount));
-        assertThat(exception.getMessage()).isEqualTo("Insufficient balance.");
+        Exception exception = assertThrows(InsufficientBalanceException.class,
+            () -> service.withdraw("123", withdrawAmount));
+        assertThat(exception.getMessage()).isEqualTo(INSUFFICIENT_BALANCE_MESSAGE);
+        verify(repository).findById("123");
+        verifyNoMoreInteractions(repository);
     }
 
     @Test
-    void shouldThrowExceptionWhenAccountNotFound() {
+    void shouldGetBalance() {
         // GIVEN
-        String accountId = "fake-id";
+        BankAccount account = BankAccount.builder()
+            .accountId("123")
+            .balance(BigDecimal.valueOf(100))
+            .statements(emptyList())
+            .build();
 
-        when(repository.findById(accountId)).thenReturn(null);
+        when(repository.findById("123")).thenReturn(account);
 
-        // WHEN - THEN
-        Exception exception = assertThrows(AccountNotFoundException.class, () -> {
-            service.getBalance(accountId);
-        });
+        // WHEN
+        BigDecimal balance = service.getBalance("123");
 
-        assertThat(exception.getMessage()).isEqualTo("Account with ID fake-id not found.");
+        // THEN
+        assertThat(balance).isEqualTo(BigDecimal.valueOf(100));
     }
 
     @Test
     void shouldMakeConcurrentDeposits() throws InterruptedException {
         // GIVEN
-        String accountId = "123";
-        BigDecimal initialBalance = BigDecimal.valueOf(100);
-
-        BankAccount account = new BankAccount(accountId, initialBalance);
-        when(repository.findById(accountId)).thenReturn(account);
+        BigDecimal depositAmount = BigDecimal.valueOf(50);
 
         // WHEN
-        Runnable depositTask = () -> service.deposit(accountId, BigDecimal.valueOf(10));
+        Runnable depositTask = () -> service.deposit("123", depositAmount);
 
         Thread thread1 = new Thread(depositTask);
         Thread thread2 = new Thread(depositTask);
@@ -104,30 +165,32 @@ public class BankAccountServiceTest {
         thread2.join();
 
         // THEN
-        assertThat(account.getBalance()).isEqualTo(BigDecimal.valueOf(120));
-        verify(repository, times(2)).save(account);
+        verify(repository, times(2)).update("123", depositAmount, DEPOSIT);
     }
 
     @Test
-    void shouldMakeConcurrentWithdrawals() throws InterruptedException {
-        // Arrange
-        String accountId = "123";
-        BigDecimal initialBalance = new BigDecimal("1000");
-        BankAccount account = new BankAccount(accountId, initialBalance);
+    void shouldMakeConcurrentWithdraws() throws InterruptedException {
+        // GIVEN
+        BigDecimal initialBalance = BigDecimal.valueOf(100);
+        BankAccount account = BankAccount.builder()
+            .accountId("123")
+            .balance(initialBalance)
+            .statements(emptyList())
+            .build();
+        when(repository.findById("123")).thenReturn(account);
 
-        when(bankAccountRepository.findById(accountId)).thenReturn(account);
+        BigDecimal withdrawAmount = new BigDecimal(10);
 
         int numberOfThreads = 10;
-        BigDecimal withdrawalAmount = new BigDecimal("100");
         CountDownLatch latch = new CountDownLatch(numberOfThreads);
         ExecutorService executorService = Executors.newFixedThreadPool(numberOfThreads);
 
-        // Act
+        // WHEN
         for (int i = 0; i < numberOfThreads; i++) {
             executorService.execute(() -> {
                 synchronized (account) {
                     try {
-                        bankAccountService.withdraw(accountId, withdrawalAmount);
+                        service.withdraw("123", withdrawAmount);
                     } catch (Exception ignored) {
                         // Ignoring exceptions for this test
                     } finally {
@@ -140,28 +203,60 @@ public class BankAccountServiceTest {
         latch.await();
         executorService.shutdown();
 
-        // Assert
-        BigDecimal expectedBalance = initialBalance.subtract(withdrawalAmount.multiply(BigDecimal.valueOf(numberOfThreads)));
-        assertTrue(account.getBalance().compareTo(BigDecimal.ZERO) >= 0, "Balance should not go below zero");
-        assertEquals(expectedBalance.max(BigDecimal.ZERO), account.getBalance());
-        verify(bankAccountRepository, times(numberOfThreads)).findById(accountId);
+        // THEN
+        verify(repository, times(numberOfThreads)).findById("123");
+        verify(repository, times(numberOfThreads)).update("123", withdrawAmount, WITHDRAW);
     }
 
     @Test
     void shouldPrintStatements() {
         // GIVEN
-        BankAccount account = new BankAccount("123", BigDecimal.ZERO);
+        Statement statement1 = Statement.builder()
+            .date(now())
+            .operationType(DEPOSIT)
+            .amount(BigDecimal.valueOf(100))
+            .balance(BigDecimal.valueOf(100))
+            .build();
+        Statement statement2 = Statement.builder()
+                .date(now())
+                .operationType(WITHDRAW)
+                .amount(BigDecimal.valueOf(30))
+                .balance(BigDecimal.valueOf(70))
+                .build();
+        BankAccount account = BankAccount.builder()
+            .accountId("123")
+            .balance(BigDecimal.valueOf(100))
+            .statements(List.of(statement1, statement2))
+            .build();
 
-        account.deposit(BigDecimal.valueOf(100));
-        account.withdraw(BigDecimal.valueOf(50));
+        when(repository.findById("123")).thenReturn(account);
 
         // WHEN
-        String statement = account.printStatement();
+        String statement = service.printStatement("123");
 
         // THEN
         assertThat(statement.contains("DEPOSIT")).isTrue();
-        assertThat(statement.contains("WITHDRAWAL")).isTrue();
+        assertThat(statement.contains("WITHDRAW")).isTrue();
         assertThat(statement.contains("100.00")).isTrue();
-        assertThat(statement.contains("50.00")).isTrue();
+        assertThat(statement.contains("30.00")).isTrue();
+        assertThat(statement.contains("70.00")).isTrue();
+    }
+
+    @Test
+    void shouldNotPrintStatements() {
+        // GIVEN
+        BankAccount account = BankAccount.builder()
+                .accountId("123")
+                .balance(BigDecimal.valueOf(100))
+                .statements(emptyList())
+                .build();
+
+        when(repository.findById("123")).thenReturn(account);
+
+        // WHEN
+        String statement = service.printStatement("123");
+
+        // THEN
+        assertThat(statement).isEqualTo(NO_STATEMENT);
     }
 }
