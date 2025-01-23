@@ -5,20 +5,13 @@ import org.springframework.stereotype.Repository;
 import sg.kata.entity.BankAccountEntity;
 import sg.kata.entity.StatementEntity;
 import sg.kata.exception.AccountNotFoundException;
-import sg.kata.exception.InsufficientBalanceException;
-import sg.kata.exception.InvalidAmountException;
 import sg.kata.model.BankAccount;
-import sg.kata.model.OperationType;
 import sg.kata.model.Statement;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-import static java.math.BigDecimal.ZERO;
-import static java.time.LocalDateTime.now;
-import static sg.kata.model.OperationType.DEPOSIT;
 import static sg.kata.service.BankAccountService.*;
 
 @Repository
@@ -53,35 +46,29 @@ public class BankAccountEntityRepository implements BankAccountRepository {
     }
 
     @Override
-    public void update(String accountId, BigDecimal amount, OperationType operationType) {
-        if (amount.compareTo(ZERO) <= 0) {
-            throw new InvalidAmountException(operationType.getDescription() + POSITIVE_AMOUNT_MESSAGE);
-        }
-        if (amount.scale() > 2) {
-            throw new InvalidAmountException(PRECISION_EXCEEDED_MESSAGE);
-        }
-        Optional<BankAccountEntity> entity = jpaRepository.findById(accountId);
-        if (entity.isPresent()) {
-            BankAccountEntity bankAccountEntity = entity.get();
+    public void update(BankAccount bankAccount) {
+        Optional<BankAccountEntity> bankAccountEntity = jpaRepository.findById(bankAccount.getAccountId());
+        if (bankAccountEntity.isPresent()) {
+            BankAccountEntity entity = bankAccountEntity.get();
+            List<StatementEntity> statementEntities = entity.getStatements();
+            List<Statement> statements = bankAccount.getStatements();
 
-            BigDecimal newBalance = operationType.equals(DEPOSIT) ?
-                bankAccountEntity.getBalance().add(amount) : bankAccountEntity.getBalance().subtract(amount);
-            if (newBalance.compareTo(ZERO) < 0) {
-                throw new InsufficientBalanceException(INSUFFICIENT_BALANCE_MESSAGE);
+            if (statements.isEmpty() || statements.size() - statementEntities.size() != 1) {
+                throw new IllegalArgumentException(UPDATE_WITHOUT_STATEMENT);
+            } else {
+                Statement newStatement = statements.get(statements.size() - 1);
+                StatementEntity newStatementEntity = StatementEntity.builder()
+                    .date(newStatement.getDate())
+                    .operationType(newStatement.getOperationType())
+                    .amount(newStatement.getAmount())
+                    .balance(newStatement.getBalance())
+                    .build();
+                statementEntities.add(newStatementEntity);
+
+                entity.setStatements(statementEntities);
+                entity.setBalance(bankAccount.getBalance());
+                jpaRepository.save(entity);
             }
-            bankAccountEntity.setBalance(newBalance);
-
-            List<StatementEntity> statementEntities = bankAccountEntity.getStatements();
-            statementEntities.add(StatementEntity.builder()
-                .date(now())
-                .operationType(operationType)
-                .amount(amount)
-                .balance(newBalance)
-                .build()
-            );
-            bankAccountEntity.setStatements(statementEntities);
-
-            jpaRepository.save(bankAccountEntity);
         } else {
             throw new AccountNotFoundException(INVALID_ACCOUNT_MESSAGE);
         }

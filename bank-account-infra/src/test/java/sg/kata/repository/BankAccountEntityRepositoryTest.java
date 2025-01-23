@@ -9,7 +9,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import sg.kata.entity.BankAccountEntity;
 import sg.kata.entity.StatementEntity;
 import sg.kata.exception.AccountNotFoundException;
-import sg.kata.exception.InsufficientBalanceException;
 import sg.kata.model.BankAccount;
 import sg.kata.model.Statement;
 
@@ -28,8 +27,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import static sg.kata.model.OperationType.DEPOSIT;
 import static sg.kata.model.OperationType.WITHDRAW;
-import static sg.kata.service.BankAccountService.INSUFFICIENT_BALANCE_MESSAGE;
 import static sg.kata.service.BankAccountService.INVALID_ACCOUNT_MESSAGE;
+import static sg.kata.service.BankAccountService.UPDATE_WITHOUT_STATEMENT;
 
 @ExtendWith(MockitoExtension.class)
 public class BankAccountEntityRepositoryTest {
@@ -85,19 +84,23 @@ public class BankAccountEntityRepositoryTest {
         BigDecimal depositAmount = BigDecimal.valueOf(50);
         BigDecimal initialBalance = BigDecimal.valueOf(100);
         BigDecimal newBalance = BigDecimal.valueOf(150);
-
         LocalDateTime now = now();
-        StatementEntity statementEntity = new StatementEntity("123-1", now, DEPOSIT,
-            initialBalance, initialBalance);
+
+        List<Statement> statements = new ArrayList<>();
+        statements.add(new Statement(now, DEPOSIT, initialBalance, initialBalance));
+        statements.add(new Statement(now.plusMinutes(1), DEPOSIT, depositAmount, newBalance));
+        BankAccount bankAccount = new BankAccount("123", newBalance, statements);
+
         List<StatementEntity> statementEntities = new ArrayList<>();
-        statementEntities.add(statementEntity);
+        statementEntities.add(new StatementEntity("123-1", now, DEPOSIT,
+            initialBalance, initialBalance));
         BankAccountEntity bankAccountEntity = new BankAccountEntity("123",
             initialBalance, statementEntities);
 
         when(jpaRepository.findById("123")).thenReturn(Optional.of(bankAccountEntity));
 
         // WHEN
-        repository.update("123", depositAmount, DEPOSIT);
+        repository.update(bankAccount);
 
         // THEN
         ArgumentCaptor<BankAccountEntity> captor = ArgumentCaptor.forClass(BankAccountEntity.class);
@@ -107,7 +110,7 @@ public class BankAccountEntityRepositoryTest {
         assertThat(entity.getBalance()).isEqualTo(newBalance);
         assertThat(entity.getStatements()).hasSize(2)
             .extracting(StatementEntity::getOperationType, StatementEntity::getAmount, StatementEntity::getBalance)
-            .containsExactlyInAnyOrder(tuple(DEPOSIT, initialBalance, initialBalance), tuple(DEPOSIT, depositAmount, newBalance));
+            .containsExactly(tuple(DEPOSIT, initialBalance, initialBalance), tuple(DEPOSIT, depositAmount, newBalance));
     }
 
     @Test
@@ -116,19 +119,23 @@ public class BankAccountEntityRepositoryTest {
         BigDecimal withdrawAmount = BigDecimal.valueOf(50);
         BigDecimal initialBalance = BigDecimal.valueOf(150);
         BigDecimal newBalance = BigDecimal.valueOf(100);
-
         LocalDateTime now = now();
-        StatementEntity statementEntity = new StatementEntity("123-1", now, DEPOSIT,
-            initialBalance, initialBalance);
+
+        List<Statement> statements = new ArrayList<>();
+        statements.add(new Statement(now, DEPOSIT, initialBalance, initialBalance));
+        statements.add(new Statement(now.plusMinutes(1), WITHDRAW, withdrawAmount, newBalance));
+        BankAccount bankAccount = new BankAccount("123", newBalance, statements);
+
         List<StatementEntity> statementEntities = new ArrayList<>();
-        statementEntities.add(statementEntity);
+        statementEntities.add(new StatementEntity("123-1", now, DEPOSIT,
+            initialBalance, initialBalance));
         BankAccountEntity bankAccountEntity = new BankAccountEntity("123",
             initialBalance, statementEntities);
 
         when(jpaRepository.findById("123")).thenReturn(Optional.of(bankAccountEntity));
 
         // WHEN
-        repository.update("123", withdrawAmount, WITHDRAW);
+        repository.update(bankAccount);
 
         // THEN
         ArgumentCaptor<BankAccountEntity> captor = ArgumentCaptor.forClass(BankAccountEntity.class);
@@ -138,101 +145,58 @@ public class BankAccountEntityRepositoryTest {
         assertThat(entity.getBalance()).isEqualTo(newBalance);
         assertThat(entity.getStatements()).hasSize(2)
             .extracting(StatementEntity::getOperationType, StatementEntity::getAmount, StatementEntity::getBalance)
-            .containsExactlyInAnyOrder(tuple(DEPOSIT, initialBalance, initialBalance), tuple(WITHDRAW, withdrawAmount, newBalance));
+            .containsExactly(tuple(DEPOSIT, initialBalance, initialBalance), tuple(WITHDRAW, withdrawAmount, newBalance));
     }
 
     @Test
     void shouldNotUpdateInvalidAccount() {
         // GIVEN
-        String accountId = "fake-id";
+        BankAccount bankAccount = new BankAccount("fake-id", ZERO, emptyList());
 
         // WHEN - THEN
-        Exception exception = assertThrows(AccountNotFoundException.class, () -> repository.update(accountId, BigDecimal.valueOf(100), DEPOSIT));
+        Exception exception = assertThrows(AccountNotFoundException.class, () -> repository.update(bankAccount));
         assertThat(exception.getMessage()).isEqualTo(INVALID_ACCOUNT_MESSAGE);
     }
 
     @Test
-    void shouldNotUpdateAccountWithNegativeValues() {
+    void shouldNotUpdateAccountWithoutNewStatement() {
         // GIVEN
-        BigDecimal withdrawAmount = BigDecimal.valueOf(100);
-        BigDecimal initialBalance = BigDecimal.valueOf(50);
+        BigDecimal initialBalance = BigDecimal.valueOf(100);
+        BigDecimal newBalance = BigDecimal.valueOf(150);
+        LocalDateTime now = now();
 
+        List<Statement> statements = new ArrayList<>();
+        statements.add(new Statement(now, DEPOSIT, initialBalance, initialBalance));
+        BankAccount bankAccount = new BankAccount("123", newBalance, statements);
+
+        List<StatementEntity> statementEntities = new ArrayList<>();
+        statementEntities.add(new StatementEntity("123-1", now, DEPOSIT,
+            initialBalance, initialBalance));
         BankAccountEntity bankAccountEntity = new BankAccountEntity("123",
-            initialBalance, emptyList());
+            initialBalance, statementEntities);
 
         when(jpaRepository.findById("123")).thenReturn(Optional.of(bankAccountEntity));
 
         // WHEN - THEN
-        Exception exception = assertThrows(InsufficientBalanceException.class, () -> repository.update("123", withdrawAmount, WITHDRAW));
-        assertThat(exception.getMessage()).isEqualTo(INSUFFICIENT_BALANCE_MESSAGE);
+        Exception exception = assertThrows(IllegalArgumentException.class, () -> repository.update(bankAccount));
+        assertThat(exception.getMessage()).isEqualTo(UPDATE_WITHOUT_STATEMENT);
     }
 
     @Test
-    void shouldMakeConcurrentDeposits() throws InterruptedException {
+    void shouldNotUpdateAccountWithoutAnyStatement() {
         // GIVEN
-        BigDecimal depositAmount = BigDecimal.valueOf(50);
-        BigDecimal initialBalance = BigDecimal.valueOf(100);
-        BigDecimal balance1 = BigDecimal.valueOf(150);
-        BigDecimal balance2 = BigDecimal.valueOf(200);
+        BankAccount bankAccount = new BankAccount("123", BigDecimal.valueOf(100), emptyList());
 
-        BankAccountEntity bankAccountEntity1 = new BankAccountEntity("123",
-                initialBalance, new ArrayList<>());
-        BankAccountEntity bankAccountEntity2 = new BankAccountEntity("123",
-                balance1, new ArrayList<>());
+        List<StatementEntity> statementEntities = new ArrayList<>();
+        statementEntities.add(new StatementEntity("123-1", now(), DEPOSIT,
+            BigDecimal.valueOf(50), BigDecimal.valueOf(50)));
+        BankAccountEntity bankAccountEntity = new BankAccountEntity("123",
+            BigDecimal.valueOf(50), statementEntities);
 
-        when(jpaRepository.findById("123")).thenReturn(Optional.of(bankAccountEntity1), Optional.of(bankAccountEntity2));
+        when(jpaRepository.findById("123")).thenReturn(Optional.of(bankAccountEntity));
 
-        // WHEN
-        Runnable depositTask = () -> repository.update("123", depositAmount, DEPOSIT);
-
-        Thread thread1 = new Thread(depositTask);
-        Thread thread2 = new Thread(depositTask);
-
-        thread1.start();
-        thread2.start();
-        thread1.join();
-        thread2.join();
-
-        // THEN
-        ArgumentCaptor<BankAccountEntity> captor = ArgumentCaptor.forClass(BankAccountEntity.class);
-        verify(jpaRepository, times(2)).save(captor.capture());
-        List<BankAccountEntity> entities = captor.getAllValues();
-        assertThat(entities).hasSize(2)
-            .extracting(BankAccountEntity::getAccountId, BankAccountEntity::getBalance)
-            .containsExactlyInAnyOrder(tuple("123", balance1), tuple("123", balance2));
-    }
-
-    @Test
-    void shouldMakeConcurrentWithdraws() throws InterruptedException {
-        // GIVEN
-        BigDecimal withdrawAmount = BigDecimal.valueOf(50);
-        BigDecimal initialBalance = BigDecimal.valueOf(100);
-
-        BankAccountEntity bankAccountEntity1 = new BankAccountEntity("123",
-                initialBalance, new ArrayList<>());
-        BankAccountEntity bankAccountEntity2 = new BankAccountEntity("123",
-                initialBalance.subtract(withdrawAmount), new ArrayList<>());
-
-        when(jpaRepository.findById("123")).thenReturn(Optional.of(bankAccountEntity1), Optional.of(bankAccountEntity2));
-
-        // WHEN
-        Runnable withdrawTask = () -> repository.update("123", withdrawAmount, WITHDRAW);
-
-        Thread thread1 = new Thread(withdrawTask);
-        Thread thread2 = new Thread(withdrawTask);
-
-        thread1.start();
-        thread2.start();
-        thread1.join();
-        thread2.join();
-
-        // THEN
-        ArgumentCaptor<BankAccountEntity> captor = ArgumentCaptor.forClass(BankAccountEntity.class);
-        verify(jpaRepository, times(2)).findById("123");
-        verify(jpaRepository, times(2)).save(captor.capture());
-        List<BankAccountEntity> entities = captor.getAllValues();
-        assertThat(entities).hasSize(2)
-            .extracting(BankAccountEntity::getAccountId, BankAccountEntity::getBalance)
-            .containsExactlyInAnyOrder(tuple("123", initialBalance.subtract(withdrawAmount)), tuple("123", ZERO));
+        // WHEN - THEN
+        Exception exception = assertThrows(IllegalArgumentException.class, () -> repository.update(bankAccount));
+        assertThat(exception.getMessage()).isEqualTo(UPDATE_WITHOUT_STATEMENT);
     }
 }

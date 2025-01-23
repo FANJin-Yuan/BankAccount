@@ -1,16 +1,18 @@
 package sg.kata.model;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Value;
+import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-@Value
+@Data
+@AllArgsConstructor
 @Builder
 public class Statement {
-    LocalDateTime date;
-    OperationType operationType;
-    BigDecimal amount;
-    BigDecimal balance;
+    private LocalDateTime date;
+    private OperationType operationType;
+    private BigDecimal amount;
+    private BigDecimal balance;
 }

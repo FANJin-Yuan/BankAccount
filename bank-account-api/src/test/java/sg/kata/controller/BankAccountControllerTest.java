@@ -12,10 +12,13 @@ import java.math.BigDecimal;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static sg.kata.controller.BankAccountController.DEPOSIT_SUCCESSFUL;
+import static sg.kata.controller.BankAccountController.WITHDRAW_SUCCESSFUL;
 
 @WebMvcTest(BankAccountController.class)
 public class BankAccountControllerTest {
@@ -29,62 +32,73 @@ public class BankAccountControllerTest {
     @Test
     void shouldMakeADeposit() throws Exception {
         // GIVEN
-        String accountId = "123";
-        BigDecimal amount = new BigDecimal(100);
+        String requestBody = "{\"accountId\": \"123\", \"amount\": 100}";
 
         // WHEN - THEN
         mockMvc.perform(
-            post("/api/accounts/{accountId}/deposit", accountId)
-                .param("amount", amount.toString())
-        ).andExpect(status().isOk());
+            post("/api/accounts/deposit")
+                .contentType(APPLICATION_JSON)
+                .content(requestBody)
+        )
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$", is(DEPOSIT_SUCCESSFUL)));
 
-        verify(service).deposit(accountId, amount);
+        verify(service).deposit("123", BigDecimal.valueOf(100));
     }
 
     @Test
     void shouldMakeAWithdraw() throws Exception {
         // GIVEN
-        String accountId = "123";
-        BigDecimal amount = new BigDecimal(50);
+        String requestBody = "{\"accountId\": \"123\", \"amount\": 50}";
 
         // WHEN -THEN
         mockMvc.perform(
-            post("/api/accounts/{accountId}/withdraw", accountId)
-                .param("amount", amount.toString())
-        ).andExpect(status().isOk());
+            post("/api/accounts/withdraw")
+                .contentType(APPLICATION_JSON)
+                .content(requestBody)
+        )
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$", is(WITHDRAW_SUCCESSFUL)));
 
-        verify(service).withdraw(accountId, amount);
+        verify(service).withdraw("123", BigDecimal.valueOf(50));
     }
 
     @Test
     void shouldGetBalance() throws Exception {
         // GIVEN
-        String accountId = "123";
-        BigDecimal balance = new BigDecimal(1000);
+        String requestBody = "{\"accountId\": \"123\"}";
 
-        when(service.getBalance(accountId)).thenReturn(balance);
+        when(service.getBalance("123")).thenReturn(BigDecimal.valueOf(100));
 
         // WHEN - THEN
-        mockMvc.perform(get("/api/accounts/{accountId}/balance", accountId))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$").value("1000"));
+        mockMvc.perform(
+            get("/api/accounts/balance")
+                .contentType(APPLICATION_JSON)
+                .content(requestBody)
+        )
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$").value("100"));
 
-        verify(service).getBalance(accountId);
+        verify(service).getBalance("123");
     }
 
     @Test
     void shouldPrintStatement() throws Exception {
         // GIVEN
-        String accountId = "123";
+        String requestBody = "{\"accountId\": \"123\"}";
         String statement = "2025-01-15: DEPOSIT 100 (Balance: 100)";
 
-        when(service.printStatement(accountId)).thenReturn(statement);
+        when(service.printStatement("123")).thenReturn(statement);
 
         // WHEN - THEN
-        mockMvc.perform(get("/api/accounts/{accountId}/statement", accountId))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$", is(statement)));
+        mockMvc.perform(
+            get("/api/accounts/statement")
+                .contentType(APPLICATION_JSON)
+                .content(requestBody)
+        )
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$", is(statement)));
 
-        verify(service).printStatement(accountId);
+        verify(service).printStatement("123");
     }
 }

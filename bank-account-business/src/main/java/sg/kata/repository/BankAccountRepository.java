@@ -7,5 +7,5 @@ import java.math.BigDecimal;
 
 public interface BankAccountRepository {
     BankAccount findById(String accountId);
-    void update(String accountId, BigDecimal amount, OperationType operationType);
+    void update(BankAccount bankAccount);
 }
